@@ -1,18 +1,25 @@
-# proxy_app.py
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 import httpx
 
 app = FastAPI()
-TARGET_URL = "https://api.apiyi.com"
+TARGET_URL = "https://api.anthropic.com"
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy(request: Request, path: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         url = f"{TARGET_URL}/{path}"
-        headers = dict(request.headers)
-        headers["host"] = "api.apiyi.com"
-        headers["authorization"] = "Bearer sk-QLvcMgEb9p1qbzfwD5E9C138185b474eB27dFc46FaE16fE9"
+        
+        # Копируем заголовки, исключая те что могут вызвать проблемы
+        headers = {}
+        for key, value in request.headers.items():
+            if key.lower() not in ["host", "content-length", "transfer-encoding"]:
+                headers[key] = value
+        
+        # Устанавливаем правильный host
+        headers["host"] = "api.anthropic.com"
+        
+        # Добавляем query параметры если есть
         if request.query_params:
             url += "?" + str(request.query_params)
 
@@ -24,8 +31,14 @@ async def proxy(request: Request, path: str):
         )
         resp = await client.send(req, stream=True)
 
+        # Фильтруем заголовки ответа
+        response_headers = {}
+        for key, value in resp.headers.items():
+            if key.lower() not in ["content-encoding", "transfer-encoding", "content-length"]:
+                response_headers[key] = value
+
         return StreamingResponse(
             resp.aiter_raw(),
             status_code=resp.status_code,
-            headers=dict(resp.headers),
+            headers=response_headers,
         )
